@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"strings"
 	"sync/atomic"
 
 	"github.com/zxfonline/config"
@@ -56,7 +55,7 @@ func LoadIpTable() {
 	}
 	//解析系统环境变量
 	section := config.DEFAULT_SECTION
-	if options, _ := cfg.SectionOptions(section); options != nil {
+	if options, err := cfg.SectionOptions(section); err == nil && options != nil {
 		for _, option := range options {
 			//on=true 表示白名单，off表示黑名单
 			on, err := cfg.Bool(section, option)
@@ -66,6 +65,8 @@ func LoadIpTable() {
 			trustmap[option] = on
 		}
 		golog.Infof("LOAD IP TABLE FILTER:\n%+v", trustmap)
+	} else {
+		golog.Warnf("LOAD IP TABLE FILTER ERROR:%v", err)
 	}
 	//替换存在的
 	TrustFilterMap = trustmap
@@ -180,21 +181,20 @@ func IsTrustedIP(ipStr string) bool {
 //获取连接的远程ip信息
 func GetRemoteIP(con Conn) IP {
 	addr := con.RemoteAddr().String()
-	pos := strings.LastIndex(addr, ":")
-	if pos > 0 {
-		addr = addr[0:pos]
+	host, _, err := SplitHostPort(addr)
+	if err != nil {
+		host = addr
 	}
-	return ParseIP(addr)
+	return ParseIP(host)
 }
 
 //获取连接的的ip地址(eg:192.168.1.2:1234 -->192.168.1.2)
 func GetRemoteAddrIP(remoteAddr string) string {
-	addr := remoteAddr
-	pos := strings.LastIndex(addr, ":")
-	if pos > 0 {
-		addr = addr[0:pos]
+	host, _, err := SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
 	}
-	ip := ParseIP(addr)
+	ip := ParseIP(host)
 	if ip == nil {
 		return remoteAddr
 	}
