@@ -43,7 +43,6 @@ func init() {
 }
 
 func LoadIpTable() {
-	trustmap := make(map[string]bool)
 	configurl := os.Getenv("filterIpCfg")
 	if configurl == "" {
 		panic(errors.New(`没找到系统变量:"filterIpCfg"`))
@@ -56,6 +55,7 @@ func LoadIpTable() {
 	//解析系统环境变量
 	section := config.DEFAULT_SECTION
 	if options, err := cfg.SectionOptions(section); err == nil && options != nil {
+		trustmap := make(map[string]bool)
 		for _, option := range options {
 			//on=true 表示白名单，off表示黑名单
 			on, err := cfg.Bool(section, option)
@@ -65,11 +65,11 @@ func LoadIpTable() {
 			trustmap[option] = on
 		}
 		golog.Infof("LOAD IP TABLE FILTER:\n%+v", trustmap)
+		//替换存在的
+		TrustFilterMap = trustmap
 	} else {
 		golog.Warnf("LOAD IP TABLE FILTER ERROR:%v", err)
 	}
-	//替换存在的
-	TrustFilterMap = trustmap
 	atomic.StoreInt32(&loadstate, 1)
 }
 
