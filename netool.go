@@ -23,15 +23,16 @@ var (
 	//子网掩码 默认"255, 255, 0, 0"
 	InterMask IPMask = IPv4Mask(255, 255, 0, 0)
 	//默认网关 默认"127, 0, 0, 0"
-	InterIPNet IP = IPv4(127, 0, 0, 0)
-	loadstate  int32
+	InterIPNet      IP = IPv4(127, 0, 0, 0)
+	InterExternalIp    = IPv4(127, 0, 0, 0)
+	loadstate       int32
 )
 
 func init() {
 	//ip过滤表
 	TrustFilterMap = make(map[string]bool)
 	defer func() {
-		golog.Infof("DEFAULT LOCAL IP MASK:%s", InterIPNet)
+		golog.Infof("DEFAULT LOCAL IP MASK:%s | %s", InterIPNet.String(), InterExternalIp.String())
 	}()
 	//初始化默认网关
 	ipStr := GetLocalInternalIp()
@@ -39,6 +40,12 @@ func init() {
 	if ip != nil {
 		mask := ip.Mask(InterMask)
 		InterIPNet = mask
+	}
+	ipStr = GetLocalExternalIp()
+	ip = ParseIP(ipStr)
+	if ip != nil {
+		mask := ip.Mask(InterMask)
+		InterExternalIp = mask
 	}
 }
 
@@ -175,7 +182,7 @@ func IsTrustedIP(ipStr string) bool {
 	}
 	// 内网地址
 	mask := ip.Mask(InterMask)
-	return mask.Equal(InterIPNet)
+	return mask.Equal(InterIPNet) || mask.Equal(InterExternalIp)
 }
 
 //获取连接的远程ip信息
