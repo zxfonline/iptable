@@ -1,6 +1,7 @@
 // Copyright 2016 zxfonline@sina.com. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
+
 package iptable
 
 import (
@@ -31,22 +32,24 @@ var (
 func init() {
 	//ip过滤表
 	TrustFilterMap = make(map[string]bool)
-	defer func() {
-		golog.Infof("DEFAULT LOCAL IP MASK:%s | %s", InterIPNet.String(), InterExternalIp.String())
+	go func() {
+		defer func() {
+			golog.Infof("DEFAULT LOCAL IP MASK:%s | %s", InterIPNet.String(), InterExternalIp.String())
+		}()
+		//初始化默认网关
+		ipStr := GetLocalInternalIp()
+		ip := ParseIP(ipStr)
+		if ip != nil {
+			mask := ip.Mask(InterMask)
+			InterIPNet = mask
+		}
+		ipStr = GetLocalExternalIp()
+		ip = ParseIP(ipStr)
+		if ip != nil {
+			mask := ip.Mask(InterMask)
+			InterExternalIp = mask
+		}
 	}()
-	//初始化默认网关
-	ipStr := GetLocalInternalIp()
-	ip := ParseIP(ipStr)
-	if ip != nil {
-		mask := ip.Mask(InterMask)
-		InterIPNet = mask
-	}
-	ipStr = GetLocalExternalIp()
-	ip = ParseIP(ipStr)
-	if ip != nil {
-		mask := ip.Mask(InterMask)
-		InterExternalIp = mask
-	}
 }
 
 func LoadIpTable() {
@@ -82,6 +85,7 @@ func LoadIpTable() {
 
 //将内存中的数据存档
 func SaveIpTable() {
+	defer func() { recover() }()
 	if atomic.LoadInt32(&loadstate) != 1 {
 		return
 	}
