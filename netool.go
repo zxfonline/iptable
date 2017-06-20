@@ -22,11 +22,14 @@ var (
 	//ip黑白名单表
 	TrustFilterMap map[string]bool
 	//子网掩码 默认"255, 255, 0, 0"
-	InterMask IPMask = IPv4Mask(255, 255, 0, 0)
+	InterMask IPMask = IPv4Mask(255, 255, 255, 0)
 	//默认网关 默认"127, 0, 0, 0"
 	InterIPNet      IP = IPv4(127, 0, 0, 0)
-	InterExternalIp    = IPv4(127, 0, 0, 0)
+	InterExternalIp    = IPv4(192, 168, 0, 0)
 	loadstate       int32
+
+	//是否检测ip的安全性(不对外的http服务，可以不用检测)
+	CHECK_IPTRUSTED = true
 )
 
 func init() {
@@ -172,7 +175,10 @@ func IsWhiteIp(ipStr string) bool {
 }
 
 //检查ip是否是可以信任
-func IsTrustedIP(ipStr string) bool {
+func IsTrustedIP(ipStr string, ignore_ipfilter bool) bool {
+	if !ignore_ipfilter && !CHECK_IPTRUSTED {
+		return true
+	}
 	if on, exist := TrustFilterMap[ipStr]; exist {
 		return on
 	}
