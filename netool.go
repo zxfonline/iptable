@@ -5,14 +5,14 @@
 package iptable
 
 import (
-	"errors"
 	"fmt"
 	"io/ioutil"
-	. "net"
+	"net"
 	"net/http"
-	"os"
 	"regexp"
-	"sync/atomic"
+	"sync"
+
+	"github.com/zxfonline/proxyutil"
 
 	"github.com/zxfonline/config"
 	"github.com/zxfonline/golog"
@@ -20,45 +20,47 @@ import (
 
 var (
 	//ip黑白名单表
-	TrustFilterMap map[string]bool
-	//子网掩码 默认"255, 255, 0, 0"
-	InterMask IPMask = IPv4Mask(255, 255, 255, 0)
+	_TrustFilterMap map[string]bool
+	lock            sync.RWMutex
+	//子网掩码 默认"255, 255, 255, 0"
+	InterMask net.IPMask = net.IPv4Mask(255, 255, 255, 0)
 	//默认网关 默认"127, 0, 0, 0"
-	InterIPNet      IP = IPv4(127, 0, 0, 0)
-	InterExternalIp    = IPv4(192, 168, 0, 0)
-	loadstate       int32
+	InterIPNet      net.IP = net.IPv4(192, 168, 1, 0)
+	InterExternalIp        = net.IPv4(192, 168, 1, 0)
 
 	//是否检测ip的安全性(不对外的http服务，可以不用检测)
 	CHECK_IPTRUSTED = true
+	//默认
+	_configurl string = "../runtime/iptable.ini"
 )
 
 func init() {
 	//ip过滤表
-	TrustFilterMap = make(map[string]bool)
+	_TrustFilterMap = make(map[string]bool)
 	go func() {
 		defer func() {
 			golog.Infof("DEFAULT LOCAL IP MASK:%s | %s", InterIPNet.String(), InterExternalIp.String())
 		}()
 		//初始化默认网关
-		ipStr := GetLocalInternalIp()
-		ip := ParseIP(ipStr)
-		if ip != nil {
-			mask := ip.Mask(InterMask)
-			InterIPNet = mask
-		}
-		ipStr = GetLocalExternalIp()
-		ip = ParseIP(ipStr)
+		// ipStr := GetLocalInternalIp()
+		// ip := net.ParseIP(ipStr)
+		// if ip != nil {
+		// 	mask := ip.Mask(InterMask)
+		// 	InterIPNet = mask
+		// }
+		ipStr := GetLocalExternalIp()
+		ip := net.ParseIP(ipStr)
 		if ip != nil {
 			mask := ip.Mask(InterMask)
 			InterExternalIp = mask
 		}
 	}()
+	// LoadIpTable("")
 }
 
-func LoadIpTable() {
-	configurl := os.Getenv("filterIpCfg")
-	if configurl == "" {
-		panic(errors.New(`没找到系统变量:"filterIpCfg"`))
+func LoadIpTable(configurl string) {
+	if len(configurl) == 0 {
+		configurl = _configurl
 	}
 	//读取初始化配置文件
 	cfg, err := config.ReadDefault(configurl)
@@ -79,44 +81,21 @@ func LoadIpTable() {
 		}
 		golog.Infof("LOAD IP TABLE FILTER:\n%+v", trustmap)
 		//替换存在的
-		TrustFilterMap = trustmap
+		_TrustFilterMap = trustmap
+		_configurl = configurl
 	} else {
 		golog.Warnf("LOAD IP TABLE FILTER ERROR:%v", err)
 	}
-	atomic.StoreInt32(&loadstate, 1)
 }
 
-//将内存中的数据存档
-func SaveIpTable() {
-	defer func() { recover() }()
-	if atomic.LoadInt32(&loadstate) != 1 {
-		return
-	}
-	configurl := os.Getenv("filterIpCfg")
-	if configurl == "" {
-		return
-	}
-	fm := TrustFilterMap
-	cw := config.NewDefault()
-	section := config.DEFAULT_SECTION
-	for ip, state := range fm {
-		if state {
-			cw.AddOption(section, ip, "on")
-		} else {
-			cw.AddOption(section, ip, "off")
-		}
-	}
-	cw.WriteFile(configurl, os.ModePerm, `ip过滤器名单 on=白名单(用于特殊命令使用. eg:当http服务的enable=false时白名单仍可以访问)、off=黑名单`)
-}
-
-// 获取本地内网地址。
+// 获取本地内网地址
 func GetLocalInternalIp() (ip string) {
 	defer func() {
 		if e := recover(); e != nil {
 			ip = "127.0.0.1"
 		}
 	}()
-	addrs, err := InterfaceAddrs()
+	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		ip = "127.0.0.1"
 		return
@@ -124,7 +103,7 @@ func GetLocalInternalIp() (ip string) {
 
 	for _, address := range addrs {
 		// 检查ip地址判断是否回环地址
-		if ipnet, ok := address.(*IPNet); ok && !ipnet.IP.IsLoopback() {
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 			if ipnet.IP.To4() != nil {
 				ip = ipnet.IP.String()
 				return
@@ -135,7 +114,7 @@ func GetLocalInternalIp() (ip string) {
 	return
 }
 
-// 获取本地外网地址。
+// 获取本地外网地址
 func GetLocalExternalIp() (ip string) {
 	defer func() {
 		if e := recover(); e != nil {
@@ -158,9 +137,16 @@ func GetLocalExternalIp() (ip string) {
 	return
 }
 
+//GetExistExternalIp 获取外网iP
+func GetExistExternalIp() string {
+	return InterExternalIp.String()
+}
+
 //是否在黑名单中
 func IsBlackIp(ipStr string) bool {
-	if on, exist := TrustFilterMap[ipStr]; exist {
+	lock.RLock()
+	defer lock.RUnlock()
+	if on, exist := _TrustFilterMap[ipStr]; exist {
 		return !on
 	}
 	return false
@@ -168,21 +154,82 @@ func IsBlackIp(ipStr string) bool {
 
 //是否在白名单中
 func IsWhiteIp(ipStr string) bool {
-	if on, exist := TrustFilterMap[ipStr]; exist {
+	lock.RLock()
+	defer lock.RUnlock()
+	if on, exist := _TrustFilterMap[ipStr]; exist {
 		return on
 	}
 	return false
 }
 
-//检查ip是否是可以信任
-func IsTrustedIP(ipStr string, ignore_ipfilter bool) bool {
-	if !ignore_ipfilter && !CHECK_IPTRUSTED {
-		return true
+//获取所有的白名单
+func GetWhiteList() []string {
+	lock.RLock()
+	defer lock.RUnlock()
+	mp := _TrustFilterMap
+	whitelist := make([]string, 0, len(mp))
+	for ip, on := range mp {
+		if on {
+			whitelist = append(whitelist, ip)
+		}
 	}
-	if on, exist := TrustFilterMap[ipStr]; exist {
+	return whitelist
+}
+
+//获取所有的黑名单
+func GetBlackList() []string {
+	lock.RLock()
+	defer lock.RUnlock()
+	mp := _TrustFilterMap
+	blacklist := make([]string, 0, len(mp))
+	for ip, on := range mp {
+		if !on {
+			blacklist = append(blacklist, ip)
+		}
+	}
+	return blacklist
+}
+
+//添加ip过滤 on=true 表示白名单，off表示黑名单
+func AddIP(ipStr string, on bool) {
+	lock.Lock()
+	_TrustFilterMap[ipStr] = on
+	lock.Unlock()
+}
+
+//添加ip过滤 on=true 表示白名单，off表示黑名单
+func AddIPs(ips map[string]bool) {
+	lock.Lock()
+	for ip, on := range ips {
+		if len(ip) == 0 {
+			continue
+		}
+		_TrustFilterMap[ip] = on
+	}
+	lock.Unlock()
+}
+
+//删除ip名单
+func DeleteIPs(ips []string) {
+	lock.Lock()
+	for _, ip := range ips {
+		if len(ip) == 0 {
+			continue
+		}
+		delete(_TrustFilterMap, ip)
+	}
+	lock.Unlock()
+}
+
+//检查ip是否是可以信任
+func IsTrustedIP(ipStr string) bool {
+	lock.RLock()
+	if on, exist := _TrustFilterMap[ipStr]; exist {
+		lock.RUnlock()
 		return on
 	}
-	ip := ParseIP(ipStr)
+	lock.RUnlock()
+	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		return false
 	}
@@ -195,25 +242,42 @@ func IsTrustedIP(ipStr string, ignore_ipfilter bool) bool {
 	return mask.Equal(InterIPNet) || mask.Equal(InterExternalIp)
 }
 
+//检查ip是否是可以信任
+func IsTrustedIP1(ipStr string) bool {
+	if !CHECK_IPTRUSTED {
+		return true
+	}
+	return IsTrustedIP(ipStr)
+}
+
 //获取连接的远程ip信息
-func GetRemoteIP(con Conn) IP {
+func GetRemoteIP(con net.Conn) net.IP {
 	addr := con.RemoteAddr().String()
-	host, _, err := SplitHostPort(addr)
+	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr
 	}
-	return ParseIP(host)
+	return net.ParseIP(host)
 }
 
 //获取连接的的ip地址(eg:192.168.1.2:1234 -->192.168.1.2)
 func GetRemoteAddrIP(remoteAddr string) string {
-	host, _, err := SplitHostPort(remoteAddr)
+	reqIP, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
-		host = remoteAddr
+		reqIP = remoteAddr
 	}
-	ip := ParseIP(host)
-	if ip == nil {
+	origIP := net.ParseIP(reqIP)
+	if origIP == nil {
 		return remoteAddr
 	}
-	return ip.String()
+	return origIP.String()
+}
+
+// RequestIP returns the string form of the original requester's IP address for
+// the given request, taking into account X-Forwarded-For if applicable.
+// If the request was from a loopback address, then we will take the first
+// non-loopback X-Forwarded-For address. This is under the assumption that
+// your golang server is running behind a reverse proxy.
+func RequestIP(r *http.Request) string {
+	return proxyutil.RequestIP(r)
 }
