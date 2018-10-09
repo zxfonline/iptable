@@ -65,7 +65,8 @@ func LoadIpTable(configurl string) {
 	//读取初始化配置文件
 	cfg, err := config.ReadDefault(configurl)
 	if err != nil {
-		panic(fmt.Errorf("加载IP过滤表[%s]错误,error=%v", configurl, err))
+		golog.Errorf("加载IP过滤表[%s]错误,error=%v", configurl, err)
+		return
 	}
 	//解析系统环境变量
 	section := config.DEFAULT_SECTION
@@ -84,7 +85,7 @@ func LoadIpTable(configurl string) {
 		_TrustFilterMap = trustmap
 		_configurl = configurl
 	} else {
-		golog.Warnf("LOAD IP TABLE FILTER ERROR:%v", err)
+		golog.Errorf("LOAD IP TABLE FILTER ERROR:%v", err)
 	}
 }
 
