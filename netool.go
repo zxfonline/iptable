@@ -80,7 +80,7 @@ func LoadIpTable(configurl string) {
 			}
 			trustmap[option] = on
 		}
-		golog.Infof("LOAD IP TABLE FILTER:\n%+v", trustmap)
+		golog.Infof("LOAD IP TABLE FILTER:%+v", trustmap)
 		//替换存在的
 		_TrustFilterMap = trustmap
 		_configurl = configurl
